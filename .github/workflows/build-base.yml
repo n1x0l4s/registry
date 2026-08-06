@@ -1,0 +1,86 @@
+# GitHub Actions workflow to build and push base Docker image to GHCR
+name: Build and Push Base Docker Image
+
+# Trigger rules: push to master branch, version tags, pull requests, or manual trigger
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'base.dockerfile'
+      - '.github/workflows/build-base.yml'
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'base.dockerfile'
+      - '.github/workflows/build-base.yml'
+  workflow_dispatch:
+    inputs:
+      debian_release:
+        description: 'Debian release tag (e.g. latest, bookworm)'
+        required: false
+        default: 'latest'
+        type: string
+
+# Permissions required to read repository content and write packages to GHCR
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Check out source code repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Set up QEMU for multi-architecture image support
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # Step 3: Set up Docker Buildx for BuildKit features and multi-platform builds
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 4: Generate current UTC date string (YYYYMMDD) for image tagging
+      - name: Get current UTC date
+        id: date
+        run: echo "date=$(date -u +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+      # Step 5: Log in to GitHub Container Registry (GHCR) for pushing image on every run
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 6: Extract metadata and construct tags (latest + UTC date tag YYYYMMDD)
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/base
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.date.outputs.date }}
+            type=sha,format=short
+
+      # Step 7: Build and push the Docker image to GHCR (pushed on every action run)
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./base.dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            DEBIAN_RELEASE=${{ github.event.inputs.debian_release || 'latest' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
