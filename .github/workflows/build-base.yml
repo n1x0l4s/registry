@@ -2,23 +2,34 @@ name: Build and Push Base Docker Image
 
 on:
   push:
-    branches:
-      - master
     paths:
       - 'base.dockerfile'
       - '.github/workflows/build-base.yml'
   pull_request:
-    branches:
-      - master
     paths:
       - 'base.dockerfile'
       - '.github/workflows/build-base.yml'
   workflow_dispatch:
     inputs:
-      debian_release:
-        description: 'Debian release tag (e.g. latest, bookworm)'
+      DEBIAN_RELEASE:
+        description: 'Upstream release tag'
         required: false
         default: 'latest'
+        type: string
+      TZ:
+        description: 'Timezone (TZ)'
+        required: false
+        default: 'Asia/Shanghai'
+        type: choice
+        options:
+          - 'Asia/Shanghai'
+          - 'UTC'
+          - 'America/Los_Angeles'
+          - 'America/New_York'
+      APT_MIRROR:
+        description: 'APT mirror domain'
+        required: false
+        default: 'deb.debian.org'
         type: string
 
 permissions:
@@ -30,17 +41,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-
-      - name: Get current UTC date
-        id: date
-        run: echo "date=$(date -u +'%Y%m%d')" >> $GITHUB_OUTPUT
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v4
@@ -54,9 +61,8 @@ jobs:
         with:
           images: lrwx/debian
           tags: |
-            type=raw,value=latest
-            type=raw,value=${{ steps.date.outputs.date }}
-            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value={{commit_date 'YYYYMMDDHHmmss[Z]' tz='${{ github.event.inputs.TZ || 'Asia/Shanghai' }}'}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
@@ -64,13 +70,15 @@ jobs:
           context: .
           file: ./base.dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           provenance: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           build-args: |
-            DEBIAN_RELEASE=${{ github.event.inputs.debian_release || 'latest' }}
+            DEBIAN_RELEASE=${{ github.event.inputs.DEBIAN_RELEASE || 'latest' }}
+            TZ=${{ github.event.inputs.TZ || 'Asia/Shanghai' }}
+            APT_MIRROR=${{ github.event.inputs.APT_MIRROR || 'deb.debian.org' }}
+            DEBIAN_FRONTEND=noninteractive
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-

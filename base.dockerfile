@@ -1,7 +1,8 @@
 ARG DEBIAN_RELEASE=latest
 FROM debian:${DEBIAN_RELEASE} AS base
 
-ENV LANG="C.UTF-8" LC_ALL="C.UTF-8" TZ="Asia/Shanghai"
+ARG TZ=Asia/Shanghai
+ENV LANG="C.UTF-8" LC_ALL="C.UTF-8" TZ="${TZ}"
 RUN <<-EOF
 set -eu
 if [ -r "/usr/share/zoneinfo/${TZ}" ]; then
