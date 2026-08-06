@@ -22,7 +22,7 @@ quiet "1";
 EOF
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG APT_MIRROR
+ARG APT_MIRROR=deb.debian.org
 RUN <<-EOF
 set -eu
 if [ -f "/etc/apt/sources.list.d/debian.sources" ]; then
