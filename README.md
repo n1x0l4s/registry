@@ -111,3 +111,10 @@ Automated via GitHub Actions in [`.github/workflows/`](.github/workflows/):
 
 - [**`docker-io-lrwx-debian.yml`**](.github/workflows/docker-io-lrwx-debian.yml): Builds and pushes `lrwx/debian` base OS image.
 - [**`docker-io-lrwx-java.yml`**](.github/workflows/docker-io-lrwx-java.yml): Builds and pushes `lrwx/java` images (`jre` / `jdk`) with Adoptium API integration.
+
+---
+
+## License
+
+This project is licensed under the **GNU Affero General Public License v3.0** (AGPL-3.0). See the [LICENSE](LICENSE) file for details.
+
