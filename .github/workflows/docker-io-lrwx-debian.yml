@@ -1,16 +1,16 @@
-name: Build and Push base.dockerfile
+name: Build and Push Debian
 
 on:
   schedule:
     - cron: '0 0 * * *'
   push:
     paths:
-      - 'base.dockerfile'
-      - '.github/workflows/build-base.yml'
+      - 'docker.io/lrwx/debian/**'
+      - '.github/workflows/docker-io-lrwx-debian.yml'
   pull_request:
     paths:
-      - 'base.dockerfile'
-      - '.github/workflows/build-base.yml'
+      - 'docker.io/lrwx/debian/**'
+      - '.github/workflows/docker-io-lrwx-debian.yml'
   workflow_dispatch:
     inputs:
       DEBIAN_RELEASE:
@@ -34,6 +34,10 @@ on:
         default: 'deb.debian.org'
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -43,7 +47,7 @@ jobs:
 
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up multiarch support
         uses: docker/setup-qemu-action@v4
@@ -64,13 +68,13 @@ jobs:
           images: lrwx/debian
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value={{commit_date 'YYYYMMDDHHmmss[Z]' tz='${{ github.event.inputs.TZ || 'Asia/Shanghai' }}'}}
+            type=raw,value={{commit_date 'YYYYMMDDHHmmssZZ' tz='${{ github.event.inputs.TZ || 'Asia/Shanghai' }}'}}
 
       - name: Build and push container image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./base.dockerfile
+          file: ./docker.io/lrwx/debian/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           provenance: false

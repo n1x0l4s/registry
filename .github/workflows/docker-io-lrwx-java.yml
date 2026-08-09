@@ -1,0 +1,126 @@
+name: Build and Push Java
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  push:
+    paths:
+      - 'docker.io/lrwx/java/**'
+      - '.github/workflows/docker-io-lrwx-java.yml'
+  pull_request:
+    paths:
+      - 'docker.io/lrwx/java/**'
+      - '.github/workflows/docker-io-lrwx-java.yml'
+  workflow_dispatch:
+    inputs:
+      JAVA_MAJOR:
+        description: 'Java Major Version (e.g. 11, 17, or "lts")'
+        required: false
+        default: 'lts'
+        type: string
+      JAVA_TYPE:
+        description: 'Target bundle type: jre (minimal) or jdk (all modules)'
+        required: false
+        default: 'jre'
+        type: choice
+        options:
+          - 'jre'
+          - 'jdk'
+      JAVA_MODULES:
+        description: 'Explicit comma-separated Java modules (leave blank for dynamic JAVA_TYPE defaults)'
+        required: false
+        default: ''
+        type: string
+      BASE_TAG:
+        description: 'lrwx/debian base image tag'
+        required: false
+        default: 'latest'
+        type: string
+      JLINK_ARGS:
+        description: 'Additional arguments for jlink'
+        required: false
+        default: '--strip-debug --no-man-pages --no-header-files --compress 2'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Make helper scripts executable
+        run: chmod +x ./docker.io/lrwx/java/*.sh
+
+      - name: Resolve Java Major Version via Adoptium API
+        id: adoptium
+        run: ./docker.io/lrwx/java/resolve-version.sh "${{ github.event.inputs.JAVA_MAJOR || 'lts' }}"
+
+      - name: Dynamically Resolve Supported Java Modules
+        id: modules
+        run: ./docker.io/lrwx/java/resolve-modules.sh "${{ steps.adoptium.outputs.JAVA_MAJOR }}" "${{ github.event.inputs.JAVA_TYPE || 'jre' }}" "${{ github.event.inputs.JAVA_MODULES }}"
+
+      - name: Extract Timezone from Base Image
+        id: tz
+        run: |
+          BASE_TAG="${{ github.event.inputs.BASE_TAG || 'latest' }}"
+          BASE_IMAGE="lrwx/debian:${BASE_TAG}"
+          echo "Pulling ${BASE_IMAGE} to extract TZ..."
+          docker pull "${BASE_IMAGE}" || true
+          IMAGE_TZ=$(docker inspect "${BASE_IMAGE}" 2>/dev/null | jq -r '.[0].Config.Env[]? | select(startswith("TZ=")) | split("=")[1]' | head -n1 || true)
+          if [ -z "${IMAGE_TZ}" ] || [ "${IMAGE_TZ}" = "null" ]; then
+            IMAGE_TZ="Asia/Shanghai"
+          fi
+          echo "Resolved Base Image TZ: ${IMAGE_TZ}"
+          echo "TZ=${IMAGE_TZ}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up multiarch support
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up container builder
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: lrwx/java
+          tags: |
+            type=raw,value=${{ github.event.inputs.JAVA_TYPE || 'jre' }}
+            type=raw,value=${{ github.event.inputs.JAVA_TYPE || 'jre' }}-${{ steps.adoptium.outputs.JAVA_MAJOR }}
+            type=raw,value=${{ github.event.inputs.JAVA_TYPE || 'jre' }}-${{ steps.adoptium.outputs.JAVA_MAJOR }}-{{commit_date 'YYYYMMDDHHmmssZZ' tz='${{ steps.tz.outputs.TZ }}'}}
+
+      - name: Build and push container image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./docker.io/lrwx/java/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: |
+            BASE_TAG=${{ github.event.inputs.BASE_TAG || 'latest' }}
+            JAVA_MAJOR=${{ steps.adoptium.outputs.JAVA_MAJOR }}
+            JAVA_TYPE=${{ github.event.inputs.JAVA_TYPE || 'jre' }}
+            JAVA_MODULES=${{ steps.modules.outputs.JAVA_MODULES }}
+            RUN_USER=${{ (github.event.inputs.JAVA_TYPE == 'jdk') && 'root' || 'java' }}
+            JLINK_ARGS=${{ github.event.inputs.JLINK_ARGS || '--strip-debug --no-man-pages --no-header-files --compress 2' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
