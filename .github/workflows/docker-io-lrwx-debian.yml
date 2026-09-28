@@ -85,10 +85,10 @@ jobs:
           EXTRA_PKG="${{github.event.inputs.EXTRA_PKG}}"
           case "${FLAVOUR}" in
           (*"runtime"*) RELEASE="${RELEASE:-stable}"
-          EXTRA_PKG="${EXTRA_PKG} nvi file iproute2 curl" ;;
+          EXTRA_PKG="nvi file iproute2 curl ${EXTRA_PKG}" ;;
           (*"develop"*) RELEASE="${RELEASE:-sid}"
-          EXTRA_PKG="${EXTRA_PKG} nmap libssl-dev build-essential pkg-config"
-          EXTRA_PKG="${EXTRA_PKG} git yq neovim file iproute2 curl" ;;
+          EXTRA_PKG="nmap libssl-dev build-essential pkg-config ${EXTRA_PKG}"
+          EXTRA_PKG="git yq neovim file iproute2 curl ${EXTRA_PKG}" ;;
           (*) RELEASE="${RELEASE:-stable}" ;; esac
           echo "RELEASE=${RELEASE}"
           echo "EXTRA_PKG=${EXTRA_PKG}"
@@ -121,8 +121,8 @@ jobs:
       - name: Build and push container image
         uses: docker/build-push-action@v7
         with:
-          context: ./docker.io/lrwx/debian
-          file: Dockerfile
+          context: .
+          file: ./docker.io/lrwx/debian/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{github.event_name != 'pull_request'}}
           provenance: false

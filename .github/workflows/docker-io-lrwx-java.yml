@@ -155,8 +155,8 @@ jobs:
       - name: Build and push container image
         uses: docker/build-push-action@v7
         with:
-          context: ./docker.io/lrwx/java
-          file: Dockerfile
+          context: .
+          file: ./docker.io/lrwx/java/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{github.event_name != 'pull_request'}}
           provenance: false

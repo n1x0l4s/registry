@@ -76,8 +76,8 @@ jobs:
       - name: Build and push container image
         uses: docker/build-push-action@v7
         with:
-          context: ./docker.io/lrwx/tccli
-          file: Dockerfile
+          context: .
+          file: ./docker.io/lrwx/tccli/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{github.event_name != 'pull_request'}}
           provenance: false
