@@ -81,7 +81,7 @@ jobs:
           APT_MIRROR="${{github.event.inputs.APT_MIRROR||'deb.debian.org'}}"
           echo "APT_MIRROR=${APT_MIRROR}"
 
-          RELEASE="${{github.event.inputs.APT_MIRROR}}"
+          RELEASE="${{github.event.inputs.RELEASE}}"
           EXTRA_PKG="${{github.event.inputs.EXTRA_PKG}}"
           case "${FLAVOUR}" in
           (*"runtime"*) RELEASE="${RELEASE:-stable}"
