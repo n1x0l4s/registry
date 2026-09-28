@@ -1,4 +1,4 @@
-name: Build and Push TCCLI
+name: Build and Push UV-NVM
 
 on:
   schedule:
