@@ -51,22 +51,14 @@ jobs:
           username: ${{secrets.DOCKERHUB_USERNAME}}
           password: ${{secrets.DOCKERHUB_TOKEN}}
 
-      - name: Set BASE_TAG from inputs
-        id: config
+      - name: Populate default input variables
+        id: env
         run: |
-          _BASE_TAG="${{github.event.inputs.BASE_TAG}}"
-          if [ -z "${_BASE_TAG}" ] || [ "${_BASE_TAG}" = "null" ]; then
-            _BASE_TAG="runtime"
-          fi
-          echo "BASE_TAG=${_BASE_TAG}" >> "${GITHUB_OUTPUT}"
-
-      - name: Extract Timezone from Base Image
-        id: tz
-        run: |
-          _TZ="$(docker run --rm \
-          lrwx/debian:${{steps.config.outputs.BASE_TAG}} \
-          cat /etc/timezone 2>/dev/null || echo Asia/Shanghai)"
-          echo "TZ=${_TZ}" >> "${GITHUB_OUTPUT}"
+          {
+          echo "BASE_TAG=${{github.event.inputs.BASE_TAG||'runtime'}}"
+          echo "TZ=$(docker run --rm lrwx/debian:${BASE_TAG} cat /etc/timezone \
+          || echo 'Asia/Shanghai')"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Extract Docker metadata
         id: meta
@@ -75,9 +67,9 @@ jobs:
           images: lrwx/tccli
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{steps.config.outputs.PYTHON_VERSION}}
-            type=raw,value=git-{{commit_date 'YYYYMMDDHHmmss' tz='${{steps.tz.outputs.TZ}}'}}
-            type=raw,value={{date 'YYYYMMDDHHmmss' tz='${{steps.tz.outputs.TZ}}'}}
+            type=raw,value=${{steps.env.outputs.BASE_TAG}}
+            type=raw,value=git-{{commit_date 'YYYYMMDDHHmmss' tz='${{steps.env.outputs.TZ}}'}}
+            type=raw,value={{date 'YYYYMMDDHHmmss' tz='${{steps.env.outputs.TZ}}'}}
             type=raw,value=${{github.event.inputs.EXTRA_TAG}},enable=${{github.event.inputs.EXTRA_TAG != ''}}
 
 
@@ -92,7 +84,6 @@ jobs:
           tags: ${{steps.meta.outputs.tags}}
           labels: ${{steps.meta.outputs.labels}}
           annotations: ${{steps.meta.outputs.annotations}}
-          build-args: |
-            BASE_TAG=${{steps.config.outputs.BASE_TAG}}
+          build-args: BASE_TAG=${{steps.env.outputs.BASE_TAG}}
           cache-from: type=gha
           cache-to: type=gha,mode=max

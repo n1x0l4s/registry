@@ -15,7 +15,7 @@ on:
     inputs:
       FLAVOUR:
         description: 'Debian image flavour'
-        required: true
+        required: false
         default: 'runtime'
         type: choice
         options:
@@ -24,7 +24,7 @@ on:
           - 'develop'
       TZ:
         description: 'Timezone (TZ)'
-        required: true
+        required: false
         default: 'Asia/Shanghai'
         type: choice
         options:
@@ -32,10 +32,10 @@ on:
           - 'UTC'
           - 'America/Los_Angeles'
           - 'America/New_York'
-      DEBIAN_RELEASE:
+      RELEASE:
         description: 'Upstream release tag'
         required: false
-        default: ''
+        default: 'stable'
         type: string
       APT_MIRROR:
         description: 'APT mirror'
@@ -68,6 +68,32 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v7
 
+      - name: Populate default input variables
+        id: env
+        run: |
+          {
+          FLAVOUR=${{github.event.inputs.FLAVOUR||'runtime'}}
+          echo "FLAVOUR=${FLAVOUR}"
+
+          TZ=${{github.event.inputs.TZ||'Asia/Shanghai'}}
+          echo "TZ=${TZ}"
+
+          APT_MIRROR="${{github.event.inputs.APT_MIRROR||'deb.debian.org'}}"
+          echo "APT_MIRROR=${APT_MIRROR}"
+
+          RELEASE="${{github.event.inputs.APT_MIRROR}}"
+          EXTRA_PKG="${{github.event.inputs.EXTRA_PKG}}"
+          case "${FLAVOUR}" in
+          (*"runtime"*) RELEASE="${RELEASE:-stable}"
+          EXTRA_PKG="${EXTRA_PKG} nvi file iproute2 curl" ;;
+          (*"develop"*) RELEASE="${RELEASE:-sid}"
+          EXTRA_PKG="${EXTRA_PKG} nmap libssl-dev build-essential pkg-config"
+          EXTRA_PKG="${EXTRA_PKG} git yq neovim file iproute2 curl" ;;
+          (*) RELEASE="${RELEASE:-stable}" ;; esac
+          echo "RELEASE=${RELEASE}"
+          echo "EXTRA_PKG=${EXTRA_PKG}"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Set up multiarch support
         uses: docker/setup-qemu-action@v4
 
@@ -87,23 +113,10 @@ jobs:
           images: lrwx/debian
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{github.event.inputs.FLAVOUR}}
-            type=raw,value=git-{{commit_date 'YYYYMMDDHHmmss' tz='${{github.event.inputs.TZ}}'}}
-            type=raw,value={{date 'YYYYMMDDHHmmss' tz='${{github.event.inputs.TZ}}'}}
+            type=raw,value=${{steps.env.outputs.FLAVOUR}}
+            type=raw,value=git-{{commit_date 'YYYYMMDDHHmmss' tz='${{steps.env.outputs.TZ}}'}}
+            type=raw,value={{date 'YYYYMMDDHHmmss' tz='${{steps.env.outputs.TZ}}'}}
             type=raw,value=${{github.event.inputs.EXTRA_TAG}},enable=${{github.event.inputs.EXTRA_TAG != ''}}
-
-      - name: Determine build defaults
-        id: buildarg
-        run: |
-          _EXTRA_PKG="${{github.event.inputs.EXTRA_PKG}}"
-          case "${{github.event.inputs.FLAVOUR}}" in
-          ("runtime") echo "DEBIAN_RELEASE=stable" >> "${GITHUB_OUTPUT}"
-          _EXTRA_PKG="${_EXTRA_PKG} nvi file iproute2 curl" ;;
-          ("develop") echo "DEBIAN_RELEASE=sid" >> "${GITHUB_OUTPUT}"
-          _EXTRA_PKG="${_EXTRA_PKG} nmap libssl-dev build-essential pkg-config"
-          _EXTRA_PKG="${_EXTRA_PKG} git yq neovim file iproute2 curl" ;;
-          (*) echo "DEBIAN_RELEASE=stable" >> "${GITHUB_OUTPUT}" ;; esac
-          echo "EXTRA_PKG=${_EXTRA_PKG}" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push container image
         uses: docker/build-push-action@v7
@@ -117,10 +130,9 @@ jobs:
           labels: ${{steps.meta.outputs.labels}}
           annotations: ${{steps.meta.outputs.annotations}}
           build-args: |
-            DEBIAN_RELEASE=${{steps.buildarg.outputs.DEBIAN_RELEASE}}
-            TZ=${{github.event.inputs.TZ}}
-            APT_MIRROR=${{github.event.inputs.APT_MIRROR}}
-            DEBIAN_FRONTEND=noninteractive
-            EXTRA_PKG=${{steps.buildarg.outputs.EXTRA_PKG}}
+            RELEASE=${{steps.env.outputs.RELEASE}}
+            TZ=${{steps.env.outputs.TZ}}
+            APT_MIRROR=${{steps.env.outputs.APT_MIRROR}}
+            EXTRA_PKG=${{steps.env.outputs.EXTRA_PKG}}
           cache-from: type=gha
           cache-to: type=gha,mode=max

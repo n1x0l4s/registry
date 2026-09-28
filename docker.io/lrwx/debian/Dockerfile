@@ -1,5 +1,5 @@
-ARG DEBIAN_RELEASE=latest
-FROM debian:${DEBIAN_RELEASE} AS base
+ARG RELEASE=latest
+FROM debian:${RELEASE} AS base
 
 ARG TZ
 ENV LANG="C.UTF-8" LC_ALL="C.UTF-8" TZ="${TZ}"

@@ -13,12 +13,12 @@ on:
       - '.github/workflows/docker-io-lrwx-java.yml'
   workflow_dispatch:
     inputs:
-      JAVA_MAJOR:
+      MAJOR:
         description: 'Java Major Version (e.g. 11, 17, or "lts")'
         required: false
         default: 'lts'
         type: string
-      JAVA_FLAVOUR:
+      FLAVOUR:
         description: 'Target bundle flavour'
         required: false
         default: 'jre'
@@ -39,7 +39,7 @@ on:
       JLINK_ARGS:
         description: 'Additional arguments for jlink'
         required: false
-        default: '--strip-debug --no-man-pages --no-header-files --compress 2'
+        default: ''
         type: string
       EXTRA_TAG:
         description: 'Additional image tag'
@@ -62,6 +62,70 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v7
 
+      - name: Populate default input variables
+        id: env
+        run: |
+          {
+          MAJOR="${{github.event.inputs.MAJOR||'lts'}}"
+          URL="https://api.adoptium.net/v3/info/available_releases"
+          if [ "${MAJOR}" = "lts" ] || [ -z "${MAJOR}" ]; then
+            MAJOR=$(curl -sfL "${URL}" | jq -r '.most_recent_lts // empty')
+          fi
+          [ "${MAJOR}" -gt 7 ] || MAJOR=8
+          echo "MAJOR=${MAJOR}"
+
+          FLAVOUR=${{github.event.inputs.FLAVOUR||'jre'}}
+          echo "FLAVOUR=${FLAVOUR}"
+
+          _IMG_PFX="eclipse-temurin:${MAJOR}"
+          JAVA_MODULES=$(printf '%s,%s' "${{github.event.inputs.JAVA_MODULES}}" \
+          "$(docker run --rm --net=none ${_IMG_PFX}-jre java --list-modules | \
+          cut -d'@' -f1)" | awk -v all="$(docker run --rm --net=none \
+          ${_IMG_PFX}-jdk java --list-modules | cut -d'@' -f1)" \
+          ' BEGIN {
+              RS = "[,[:space:]]+"
+              n = split(all, a, "\n")
+              for (i = 1; i <= n; i++) if (a[i] != "") valid[a[i]] = 1
+            }
+            NF {
+              if (seen[$0]++) next
+              if ($0 in valid) {
+                out = (out == "" ? "" : out ",") $0
+              } else {
+                print "WARN: " $0 " not provided by JDK (skip)." > "/dev/stderr"
+              }
+            }
+            END { print out }
+          ')
+          if [ -z "${JAVA_MODULES}" ]; then
+            echo "ERR: No valid modules found for JDK ${_MAJOR}." >&2
+            exit 1
+          fi
+          echo "JAVA_MODULES=${JAVA_MODULES}"
+
+          BASE_TAG="${{github.event.inputs.BASE_TAG}}"
+          RUN_USER="java"
+          if [ -z "${BASE_TAG}" ] || [ "${BASE_TAG}" = "null" ]; then
+            case "${FLAVOUR}" in
+            ("jdk")  BASE_TAG="develop"; RUN_USER="root" ;;
+            (*) BASE_TAG="runtime" ;; esac
+          fi
+          echo "BASE_TAG=${BASE_TAG}"
+          echo "RUN_USER=${RUN_USER}"
+
+          JLINK_ARGS="${{github.event.inputs.JLINK_ARGS||''}}"
+          if [ -z "${JLINK_ARGS}"]; then JLINK_ARGS="--compress 2"
+          JLINK_ARGS="${JLINK_ARGS} --strip-debug"
+          JLINK_ARGS="${JLINK_ARGS} --no-man-pages"
+          JLINK_ARGS="${JLINK_ARGS} --no-header-files"
+          fi
+          echo "JLINK_ARGS=${JLINK_ARGS}"
+
+          echo "TZ=$(docker run --rm lrwx/debian:${BASE_TAG} cat /etc/timezone \
+          || echo 'Asia/Shanghai')"
+
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Set up multiarch support
         uses: docker/setup-qemu-action@v4
 
@@ -74,78 +138,6 @@ jobs:
           username: ${{secrets.DOCKERHUB_USERNAME}}
           password: ${{secrets.DOCKERHUB_TOKEN}}
 
-      - name: Pass flavour and resolve Java major version via Adoptium API
-        id: adoptium
-        run: |
-          _INPUT_VER="${{github.event.inputs.JAVA_MAJOR || 'lts'}}"
-          _DEF_VER="21"
-          _URL="https://api.adoptium.net/v3/info/available_releases"
-          if [ "${_INPUT_VER}" = "lts" ] || [ -z "${_INPUT_VER}" ]; then
-            _LTS_VER=$(curl -sfL "${_URL}" 2>/dev/null | \
-              jq -r '.most_recent_lts // empty' 2>/dev/null || true)
-            if [ -z "${_LTS_VER}" ] || [ "${_LTS_VER}" = "null" ]; then
-              _LTS_VER="${_DEF_VER}"
-            fi
-            echo "JAVA_MAJOR=${_LTS_VER}" >> "${GITHUB_OUTPUT}"
-          elif [ "${_INPUT_VER}" -gt 7 ]; then
-            echo "JAVA_MAJOR=${_INPUT_VER}" >> "${GITHUB_OUTPUT}"
-          else echo "JAVA_MAJOR=${_DEF_VER}" >> "${GITHUB_OUTPUT}"
-          fi
-          echo "JAVA_FLAVOUR=${{github.event.inputs.JAVA_FLAVOUR || 'jre'}}" \
-            >> "${GITHUB_OUTPUT}"
-
-      - name: Dynamically Resolve Supported Java Modules
-        id: modules
-        run: |
-          _MAJOR="${{steps.adoptium.outputs.JAVA_MAJOR}}"
-          _JRE_MODS="$(docker run --rm --net=none \
-          eclipse-temurin:${_MAJOR}-jre java --list-modules | cut -d'@' -f1)"
-          _TARGET_MODS="${{github.event.inputs.JAVA_MODULES}},${_JRE_MODS}"
-          echo "Fetching available JDK ${_MAJOR} modules..." >&2
-          _AVAIL_MODS="$(docker run --rm --net=none \
-          eclipse-temurin:${_MAJOR}-jdk java --list-modules | cut -d'@' -f1)"
-          _VALID_MODS=""; _OLD_IFS="${IFS}"; IFS=','; set -- ${_TARGET_MODS}
-          IFS="${_OLD_IFS}"
-          for mod in "$@"; do
-            mod=$(echo "${mod}" | tr -d ' \t\r\n')
-            [ -z "${mod}" ] && continue
-            if echo "${_AVAIL_MODS}" | grep -qx "${mod}"; then
-              if [ -z "${_VALID_MODS}" ]; then
-                _VALID_MODS="${mod}"
-              else
-                _VALID_MODS="${_VALID_MODS},${mod}"
-              fi
-            else
-              echo "WARN: ${mod} not provided by JDK ${_MAJOR} (skip)." >&2
-            fi
-          done
-          if [ -z "${_VALID_MODS}" ]; then
-            echo "ERR: No valid modules found for JDK ${_MAJOR}." >&2
-            exit 1
-          fi
-          echo "JAVA_MODULES=${_VALID_MODS}" >> "${GITHUB_OUTPUT}"
-
-      - name: Set BASE_TAG and RUN_USER from JAVA_FLAVOUR
-        id: basetag
-        run: |
-          _BASE_TAG="${{github.event.inputs.BASE_TAG}}"
-          _RUN_USER="java"
-          if [ -z "${_BASE_TAG}" ] || [ "${_BASE_TAG}" = "null" ]; then
-            case "${{steps.adoptium.outputs.JAVA_FLAVOUR}}" in
-            ("jdk")  _BASE_TAG="develop"; _RUN_USER="root" ;;
-            (*) _BASE_TAG="runtime" ;; esac
-          fi
-          echo "BASE_TAG=${_BASE_TAG}" >> "${GITHUB_OUTPUT}"
-          echo "RUN_USER=${_RUN_USER}" >> "${GITHUB_OUTPUT}"
-
-      - name: Extract Timezone from Base Image
-        id: tz
-        run: |
-          _TZ="$(docker run --rm \
-          lrwx/debian:${{steps.basetag.outputs.BASE_TAG}} \
-          cat /etc/timezone 2>/dev/null || echo Asia/Shanghai)"
-          echo "TZ=${_TZ}" >> "${GITHUB_OUTPUT}"
-
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v6
@@ -153,10 +145,10 @@ jobs:
           images: lrwx/java
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=${{steps.adoptium.outputs.JAVA_FLAVOUR}}
-            type=raw,value=${{steps.adoptium.outputs.JAVA_FLAVOUR}}-${{steps.adoptium.outputs.JAVA_MAJOR}}
-            type=raw,value=git-{{commit_date 'YYYYMMDDHHmmss' tz='${{steps.tz.outputs.TZ}}'}}
-            type=raw,value={{date 'YYYYMMDDHHmmss' tz='${{steps.tz.outputs.TZ}}'}}
+            type=raw,value=${{steps.env.outputs.FLAVOUR}}
+            type=raw,value=${{steps.env.outputs.FLAVOUR}}-${{steps.env.outputs.MAJOR}}
+            type=raw,value=git-{{commit_date 'YYYYMMDDHHmmss' tz='${{steps.env.outputs.TZ}}'}}
+            type=raw,value={{date 'YYYYMMDDHHmmss' tz='${{steps.env.outputs.TZ}}'}}
             type=raw,value=${{github.event.inputs.EXTRA_TAG}},enable=${{github.event.inputs.EXTRA_TAG != ''}}
 
 
@@ -172,11 +164,11 @@ jobs:
           labels: ${{steps.meta.outputs.labels}}
           annotations: ${{steps.meta.outputs.annotations}}
           build-args: |
-            BASE_TAG=${{steps.basetag.outputs.BASE_TAG}}
-            JAVA_MAJOR=${{steps.adoptium.outputs.JAVA_MAJOR}}
-            JAVA_FLAVOUR=${{steps.adoptium.outputs.JAVA_FLAVOUR}}
-            JAVA_MODULES=${{steps.modules.outputs.JAVA_MODULES}}
-            RUN_USER=${{steps.basetag.outputs.RUN_USER}}
-            JLINK_ARGS=${{github.event.inputs.JLINK_ARGS}}
+            BASE_TAG=${{steps.env.outputs.BASE_TAG}}
+            MAJOR=${{steps.env.outputs.MAJOR}}
+            FLAVOUR=${{steps.env.outputs.FLAVOUR}}
+            JAVA_MODULES=${{steps.env.outputs.JAVA_MODULES}}
+            RUN_USER=${{steps.env.outputs.RUN_USER}}
+            JLINK_ARGS=${{steps.env.outputs.JLINK_ARGS}}
           cache-from: type=gha
           cache-to: type=gha,mode=max
