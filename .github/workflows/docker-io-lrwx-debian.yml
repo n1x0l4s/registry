@@ -13,14 +13,18 @@ on:
       - '.github/workflows/docker-io-lrwx-debian.yml'
   workflow_dispatch:
     inputs:
-      DEBIAN_RELEASE:
-        description: 'Upstream release tag'
-        required: false
-        default: 'latest'
-        type: string
+      FLAVOUR:
+        description: 'Debian image flavour'
+        required: true
+        default: 'runtime'
+        type: choice
+        options:
+          - 'runtime'
+          - 'baremin'
+          - 'develop'
       TZ:
         description: 'Timezone (TZ)'
-        required: false
+        required: true
         default: 'Asia/Shanghai'
         type: choice
         options:
@@ -28,14 +32,29 @@ on:
           - 'UTC'
           - 'America/Los_Angeles'
           - 'America/New_York'
+      DEBIAN_RELEASE:
+        description: 'Upstream release tag'
+        required: false
+        default: ''
+        type: string
       APT_MIRROR:
         description: 'APT mirror'
         required: false
         default: 'deb.debian.org'
         type: string
+      EXTRA_PKG:
+        description: 'Additional APT packages to install'
+        required: false
+        default: ''
+        type: string
+      EXTRA_TAG:
+        description: 'Additional image tag'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
 
 permissions:
@@ -58,8 +77,8 @@ jobs:
       - name: Log in to DockerHub
         uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          username: ${{secrets.DOCKERHUB_USERNAME}}
+          password: ${{secrets.DOCKERHUB_TOKEN}}
 
       - name: Extract Docker metadata
         id: meta
@@ -68,23 +87,40 @@ jobs:
           images: lrwx/debian
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value={{commit_date 'YYYYMMDDHHmmssZZ' tz='${{ github.event.inputs.TZ || 'Asia/Shanghai' }}'}}
+            type=raw,value=${{github.event.inputs.FLAVOUR}}
+            type=raw,value=git-{{commit_date 'YYYYMMDDHHmmss' tz='${{github.event.inputs.TZ}}'}}
+            type=raw,value={{date 'YYYYMMDDHHmmss' tz='${{github.event.inputs.TZ}}'}}
+            type=raw,value=${{github.event.inputs.EXTRA_TAG}},enable=${{github.event.inputs.EXTRA_TAG != ''}}
+
+      - name: Determine build defaults
+        id: buildarg
+        run: |
+          _EXTRA_PKG="${{github.event.inputs.EXTRA_PKG}}"
+          case "${{github.event.inputs.FLAVOUR}}" in
+          ("runtime") echo "DEBIAN_RELEASE=stable" >> "${GITHUB_OUTPUT}"
+          _EXTRA_PKG="${_EXTRA_PKG} nvi file iproute2 curl" ;;
+          ("develop") echo "DEBIAN_RELEASE=sid" >> "${GITHUB_OUTPUT}"
+          _EXTRA_PKG="${_EXTRA_PKG} nmap libssl-dev build-essential pkg-config"
+          _EXTRA_PKG="${_EXTRA_PKG} git yq neovim file iproute2 curl" ;;
+          (*) echo "DEBIAN_RELEASE=stable" >> "${GITHUB_OUTPUT}" ;; esac
+          echo "EXTRA_PKG=${_EXTRA_PKG}" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push container image
         uses: docker/build-push-action@v7
         with:
-          context: .
-          file: ./docker.io/lrwx/debian/Dockerfile
+          context: ./docker.io/lrwx/debian
+          file: Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{github.event_name != 'pull_request'}}
           provenance: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
+          tags: ${{steps.meta.outputs.tags}}
+          labels: ${{steps.meta.outputs.labels}}
+          annotations: ${{steps.meta.outputs.annotations}}
           build-args: |
-            DEBIAN_RELEASE=${{ github.event.inputs.DEBIAN_RELEASE || 'latest' }}
-            TZ=${{ github.event.inputs.TZ || 'Asia/Shanghai' }}
-            APT_MIRROR=${{ github.event.inputs.APT_MIRROR || 'deb.debian.org' }}
+            DEBIAN_RELEASE=${{steps.buildarg.outputs.DEBIAN_RELEASE}}
+            TZ=${{github.event.inputs.TZ}}
+            APT_MIRROR=${{github.event.inputs.APT_MIRROR}}
             DEBIAN_FRONTEND=noninteractive
+            EXTRA_PKG=${{steps.buildarg.outputs.EXTRA_PKG}}
           cache-from: type=gha
           cache-to: type=gha,mode=max

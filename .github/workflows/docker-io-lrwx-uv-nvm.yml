@@ -1,0 +1,98 @@
+name: Build and Push TCCLI
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  push:
+    paths:
+      - 'docker.io/lrwx/uv-nvm/**'
+      - '.github/workflows/docker-io-lrwx-uv-nvm.yml'
+  pull_request:
+    paths:
+      - 'docker.io/lrwx/uv-nvm/**'
+      - '.github/workflows/docker-io-lrwx-uv-nvm.yml'
+  workflow_dispatch:
+    inputs:
+      BASE_TAG:
+        description: 'lrwx/debian base image tag'
+        required: false
+        default: ''
+        type: string
+      EXTRA_TAG:
+        description: 'Additional image tag'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Set up multiarch support
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up container builder
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v4
+        with:
+          username: ${{secrets.DOCKERHUB_USERNAME}}
+          password: ${{secrets.DOCKERHUB_TOKEN}}
+
+      - name: Set BASE_TAG from inputs
+        id: config
+        run: |
+          _BASE_TAG="${{github.event.inputs.BASE_TAG}}"
+          if [ -z "${_BASE_TAG}" ] || [ "${_BASE_TAG}" = "null" ]; then
+            _BASE_TAG="runtime"
+          fi
+          echo "BASE_TAG=${_BASE_TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Extract Timezone from Base Image
+        id: tz
+        run: |
+          _TZ="$(docker run --rm \
+          lrwx/debian:${{steps.config.outputs.BASE_TAG}} \
+          cat /etc/timezone 2>/dev/null || echo Asia/Shanghai)"
+          echo "TZ=${_TZ}" >> "${GITHUB_OUTPUT}"
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: lrwx/tccli
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{steps.config.outputs.BASE_TAG}}
+            type=raw,value=git-{{commit_date 'YYYYMMDDHHmmss' tz='${{steps.tz.outputs.TZ}}'}}
+            type=raw,value={{date 'YYYYMMDDHHmmss' tz='${{steps.tz.outputs.TZ}}'}}
+            type=raw,value=${{github.event.inputs.EXTRA_TAG}},enable=${{github.event.inputs.EXTRA_TAG != ''}}
+
+
+      - name: Build and push container image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./docker.io/lrwx/tccli
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{github.event_name != 'pull_request'}}
+          provenance: false
+          tags: ${{steps.meta.outputs.tags}}
+          labels: ${{steps.meta.outputs.labels}}
+          annotations: ${{steps.meta.outputs.annotations}}
+          build-args: |
+            BASE_TAG=${{steps.config.outputs.BASE_TAG}}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
