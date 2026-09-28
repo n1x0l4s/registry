@@ -26,19 +26,22 @@ ARG DEBIAN_FRONTEND=noninteractive APT_MIRROR EXTRA_PKG
 RUN <<-EOF
 set -eu
 . /etc/os-release
-if [ -f "/etc/apt/sources.list.d/debian.sources" ]; then
-    APT_SRC="/etc/apt/sources.list.d/debian.sources"
+APT_SRC="/etc/apt/sources.list.d/debian.sources"
+if [ -f "${APT_SRC}" ]; then
+    [ -n "${APT_MIRROR:-}" ] && sed -i "s|deb.debian.org|${APT_MIRROR}|g" "${APT_SRC}"
+    apt-get update; apt-get install ca-certificates
+    sed -i 's|http://|https://|g' "${APT_SRC}"
+    sed -i '/^Components:/ s/$/ contrib non-free non-free-firmware/' "${APT_SRC}"
+    sed -i "/^Suites:/ s/$/ ${VERSION_CODENAME}-backports/" "${APT_SRC}"
 else
     APT_SRC="/etc/apt/sources.list"
+    [ -n "${APT_MIRROR:-}" ] && sed -i "s|deb.debian.org|${APT_MIRROR}|g" "${APT_SRC}"
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates
+    sed -i 's|http://|https://|g' "${APT_SRC}"
+    sed -i 's/main$/main contrib non-free non-free-firmware/' "${APT_SRC}"
+    echo "deb https://${APT_MIRROR}/debian ${VERSION_CODENAME}-backports main contrib non-free non-free-firmware" >> "${APT_SRC}"
 fi
-if [ -n "${APT_MIRROR:-}" ]; then
-    sed -i "s/deb.debian.org/${APT_MIRROR}/g" "${APT_SRC}"
-fi
-apt-get update
-apt-get install ca-certificates
-sed -i "s/http:/https:/g" "${APT_SRC}"
-sed -i "s/main\$/main contrib non-free non-free-firmware/g" "${APT_SRC}"
-sed -i "s/${VERSION_CODENAME}-updates/${VERSION_CODENAME}-updates ${VERSION_CODENAME}-backports/g"
 apt-get update
 if [ -n "${EXTRA_PKG:-}" ]; then
     apt-get install "${EXTRA_PKG}"
