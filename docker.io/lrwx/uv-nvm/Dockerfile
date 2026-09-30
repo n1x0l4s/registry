@@ -19,9 +19,8 @@ EOF
 
 RUN <<-EOF
 set -eu
-git clone https://github.com/nvm-sh/nvm.git "${_NVM_DIR}"
-_CHK=$(git tag -l 'v*' --sort=-v:refname | head -n 1)
-git checkout "${_CHK}"
+git clone https://github.com/nvm-sh/nvm.git "${NVM_DIR}"
+git checkout "$(git tag -l 'v*' --sort=-v:refname | head -n 1)"
 . /etc/profile
 nvm install --latest-npm --no-progress --default node
 npm install --global --allow-scripts=pnpm,yarn pnpm yarn
